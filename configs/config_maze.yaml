@@ -1,0 +1,33 @@
+model:
+  name_or_path: Qwen/Qwen2-0.5B-Instruct
+  torch_dtype: auto
+  device_map: auto
+
+environment:
+  name: maze
+  
+env:
+  min_dist: 2
+  max_dist: 5
+  min_grid_size: 5
+  max_grid_size: 8
+  seed: 42
+  size: 200 # Small size for testing
+
+training:
+  output_dir: Qwen2-0.5B-GRPO-Maze
+  learning_rate: 1.0e-5
+  gradient_accumulation_steps: 4
+  num_train_epochs: 1
+  bf16: true
+  logging_steps: 5
+  save_strategy: steps
+  save_steps: 50
+  max_steps: 100
+  report_to:
+    - tensorboard
+
+generation:
+  max_completion_length: 512
+  num_generations: 4
+  max_prompt_length: 512

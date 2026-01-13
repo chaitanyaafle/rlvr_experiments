@@ -1,5 +1,5 @@
 model:
-  name_or_path: Qwen/Qwen2-0.5B-Instruct
+  name_or_path: /home/rlvr_experiments/Qwen2-0.5B-GRPO-General/checkpoint-300 #Qwen/Qwen2-0.5B-Instruct
   torch_dtype: auto
   device_map: auto
 
@@ -24,8 +24,8 @@ training:
     - tensorboard
 
 generation:
-  max_completion_length: 2048
-  num_generations: 2ss
+  max_completion_length: 512
+  num_generations: 4
   max_prompt_length: 2048
 
 system_prompt: |

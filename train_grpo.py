@@ -1,9 +1,31 @@
 import sys
 import torch
+import yaml
 from transformers import AutoModelForCausalLM
 from trl import GRPOConfig, GRPOTrainer
-from data_utils import load_config, load_and_process_dataset
-from reward_utils import get_reward_functions
+from environments.gsm8k import GSM8KEnvironment
+from environments.maze_env import MazeEnvironment
+
+def load_config(config_path):
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
+
+def get_environment(config):
+    env_config = config.get('environment', {})
+    if not env_config:
+        # Fallback for legacy config or direct dataset inference
+        if config.get('data', {}).get('dataset_name') == 'openai/gsm8k':
+            return GSM8KEnvironment(config)
+        else:
+            raise ValueError("Could not determine environment from config.")
+            
+    name = env_config.get('name')
+    if name == 'gsm8k':
+        return GSM8KEnvironment(config)
+    elif name == 'maze':
+        return MazeEnvironment(config)
+    else:
+        raise ValueError(f"Unknown environment: {name}")
 
 def main():
     if len(sys.argv) < 2:
@@ -14,6 +36,16 @@ def main():
     print(f"Loading config from {config_path}")
     config = load_config(config_path)
 
+    # Initialize Environment
+    print("Initializing Environment...")
+    env = get_environment(config)
+    
+    # Load and Process Dataset
+    dataset = env.get_dataset(config)
+    
+    # Reward Functions
+    reward_funcs = env.get_reward_functions()
+    
     # Load Model
     print(f"Loading model: {config['model']['name_or_path']}")
     model = AutoModelForCausalLM.from_pretrained(
@@ -22,14 +54,6 @@ def main():
         device_map=config['model'].get('device_map', 'auto')
     )
     
-    # Load and Process Dataset (using data_utils)
-    dataset = load_and_process_dataset(config)
-    
-    # Reward Functions (using reward_utils)
-    reward_funcs = get_reward_functions(config['data']['dataset_name'])
-    if not reward_funcs:
-        print(f"Warning: No specific reward functions found for {config['data']['dataset_name']}. Training might fail if reward function is required.")
-
     # Training Arguments
     print("Configuring training arguments...")
     training_conf = config['training']

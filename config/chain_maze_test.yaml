@@ -1,0 +1,47 @@
+
+model:
+  name_or_path: Qwen/Qwen2.5-0.5B-Instruct # Starting from a base instruct model
+  torch_dtype: auto
+  device_map: auto
+
+environment:
+  name: maze
+  min_dist: 2
+  max_dist: 5
+  seed: 42
+  size: 50 # Small size for testing
+
+sft:
+  output_file: maze_sft_data.jsonl
+  max_samples: 50
+  output_dir: outputs/maze-sft
+
+sft_training:
+  learning_rate: 2.0e-5
+  num_train_epochs: 3
+  batch_size: 2
+  gradient_accumulation_steps: 4
+  logging_steps: 1
+  save_strategy: epoch
+
+training: # GRPO settings
+  output_dir: outputs/maze-grpo
+  learning_rate: 1.0e-6 # Lower LR for RL
+  gradient_accumulation_steps: 4
+  num_train_epochs: 1
+  bf16: true
+  logging_steps: 1
+  save_strategy: steps
+  save_steps: 10
+  max_steps: 20
+  report_to:
+    - tensorboard
+
+generation:
+  max_completion_length: 512
+  num_generations: 4 # For GRPO
+  max_prompt_length: 512
+
+system_prompt: |
+  You are a helpful assistant. You must output your reasoning steps within <think></think> tags and your final answer within <answer></answer> tags.
+  You goal is to find the shortest path from start to end, you can move steps in passage, while avoiding the Walls.
