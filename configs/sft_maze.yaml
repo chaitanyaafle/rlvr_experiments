@@ -11,8 +11,8 @@ environment:
   size: 50
 
 sft:
-  output_file: maze_sft_data.jsonl
-  max_samples: 100
+  output_file: /home/rlvr_experiments/data_gen/data/maze_sft_sample.jsonl
+  max_samples: 50
   think_start_token: "<think>"
   think_end_token: "</think>"
   answer_start_token: "<answer>"

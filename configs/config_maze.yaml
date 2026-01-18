@@ -1,11 +1,11 @@
 model:
-  name_or_path: Qwen/Qwen2-0.5B-Instruct
+  name_or_path: /home/rlvr_experiments/outputs/maze-sft #Qwen/Qwen2-0.5B-Instruct
   torch_dtype: auto
   device_map: auto
 
 environment:
   name: maze
-  
+
 env:
   min_dist: 2
   max_dist: 5

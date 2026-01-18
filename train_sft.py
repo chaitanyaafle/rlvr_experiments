@@ -39,11 +39,11 @@ def main():
     # Let's say we look for 'sft_training' in config, else use 'training' but override output_dir
     
     train_args_conf = config.get('sft_training', training_conf)
-    output_dir = sft_conf.get('output_dir', 'sft_output')
+    output_dir = train_args_conf.get('output_dir', sft_conf.get('output_dir', 'sft_output'))
     
     training_args = SFTConfig(
         output_dir=output_dir,
-        dataset_text_field="text", # We will likely not use this if we have formatted messages, but SFTTrainer needs something or we use formatting_func
+        # dataset_text_field="text", # Not needed for messages format
         learning_rate=float(train_args_conf.get('learning_rate', 2e-5)),
         num_train_epochs=train_args_conf.get('num_train_epochs', 1),
         bf16=train_args_conf.get('bf16', False),

@@ -1,0 +1,22 @@
+model:
+  name_or_path: outputs/maze-sft # Pointing to the trained model by default, or base
+  torch_dtype: auto
+  device_map: auto
+
+environment:
+  name: maze
+  min_dist: 2
+  max_dist: 5
+  seed: 42
+  size: 50
+
+evaluation:
+  num_samples: 50
+  batch_size: 1 # Inefficient generation, but safe
+
+sft_format:
+  think_start_token: "<think>"
+  think_end_token: "</think>"
+  answer_start_token: "<answer>"
+  answer_end_token: "</answer>"
+  system_prompt: "You are a helpful assistant. You are given a problem and its correct solution. Your task is to generate the step-by-step reasoning that leads to this solution. Output the reasoning inside {think_start}{think_end} tags and the final answer inside {answer_start}{answer_end} tags."

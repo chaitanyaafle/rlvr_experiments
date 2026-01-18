@@ -6,6 +6,7 @@ from trl import GRPOConfig, GRPOTrainer
 from environments.gsm8k import GSM8KEnvironment
 from environments.maze_env import MazeEnvironment
 from environments.syllogism_env import SyllogismEnvironment
+from environments.battleship_env import BattleshipEnvironment
 
 def load_config(config_path):
     with open(config_path, 'r') as f:
@@ -27,6 +28,8 @@ def get_environment(config):
         return MazeEnvironment(config)
     elif name == 'syllogism':
         return SyllogismEnvironment(config)
+    elif name == 'battleship':
+        return BattleshipEnvironment(config)
     else:
         raise ValueError(f"Unknown environment: {name}")
 
