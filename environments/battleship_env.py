@@ -1,4 +1,6 @@
+
 import re
+import ast
 from datasets import Dataset
 from .base import BaseEnvironment
 from .battleship_logic import BattleshipConfig, BattleshipDataset
@@ -23,8 +25,8 @@ class BattleshipEnvironment(BaseEnvironment):
 
     def get_system_prompt(self):
         return self.config.get('system_prompt', 
-            """You are a helpful assistant. You must output your reasoning steps within <think></think> tags and the ship placement solution within <answer></answer> tags.
-            The answer must be a list of XML-like tags: <ship row=".." col=".." size=".." dir=".." />"""
+            """You are a helpful assistant playing Battleship. You must output your reasoning steps within <think></think> tags and the next shot coordinate within <answer></answer> tags.
+            The answer must be a single tuple (row, col)."""
         )
 
     def make_conversation(self, example):
@@ -49,15 +51,21 @@ class BattleshipEnvironment(BaseEnvironment):
         return hf_dataset
 
     def format_reward(self, completions, **kwargs):
-        """Checks if the completion has the correct XML tag structure for answer."""
-        pattern = r"<think>.*?</think>\s*<answer>.*?</answer>"
+        """Checks if the completion has the correct XML tag structure for answer and contains a tuple."""
+        pattern = r"<think>.*?</think>\s*<answer>\s*\(.*?\)\s*</answer>"
         completion_contents = [completion[0]["content"] for completion in completions]
         matches = [re.search(pattern, content, re.DOTALL) for content in completion_contents]
         return [1.0 if match else 0.0 for match in matches]
 
     def completeness_reward(self, completions, **kwargs):
-        """Checks if all ships are accounted for and validly placed (no overlap, within bounds). 
-        Matches row/col counts."""
+        """
+        Rewards:
+        +1.0 if Hit.
+        +2.0 if Hit on a ship that already has a hit.
+        +10.0 if all ships sunk (winning move).
+        0.0 if Miss.
+        -1.0 if shot was already taken or invalid.
+        """
         metadata = kwargs['metadata'] # list of metadata dicts
         completion_contents = [completion[0]["content"] for completion in completions]
         
@@ -68,77 +76,75 @@ class BattleshipEnvironment(BaseEnvironment):
                 rewards.append(0.0)
                 continue
                 
-            answer_text = answer_match.group(1)
-            # Parse ships
-            # Regex for <ship row="1" col="2" size="3" dir="H" />
-            # Allowing flexible whitespace and quotes
-            ship_pattern = r'<ship\s+row=[\'"](\d+)[\'"]\s+col=[\'"](\d+)[\'"]\s+size=[\'"](\d+)[\'"]\s+dir=[\'"]([HV])[\'"]\s*/>'
-            ships_found = re.findall(ship_pattern, answer_text)
+            answer_text = answer_match.group(1).strip()
             
-            if not ships_found:
-                 rewards.append(0.0)
-                 continue
+            # Parse tuple (r, c)
+            try:
+                # Use ast.literal_eval for safe parsing
+                coords = ast.literal_eval(answer_text)
+                if not isinstance(coords, (list, tuple)) or len(coords) != 2:
+                    raise ValueError
+                r, c = int(coords[0]), int(coords[1])
+            except:
+                rewards.append(0.0) 
+                continue
             
-            # Reconstruct board
+            # Validate bounds
             w, h = meta['width'], meta['height']
-            board = np.zeros((h, w), dtype=int)
-            valid_placement = True
-            
-            # Track fleet found
-            found_fleet = {}
-            
-            for r, c, size, orient in ships_found:
-                r, c, size = int(r), int(c), int(size)
-                
-                # Update found fleet count
-                found_fleet[size] = found_fleet.get(size, 0) + 1
-                
-                if orient == 'H':
-                    if c + size > w:
-                        valid_placement = False; break
-                    # Overlap check (strict logic puzzle: usually NO touching, but let's just check raw visual overlap first)
-                    # We will enforce the generate rules. Logic Generator used strict no-touching?
-                    # Generator used "_can_place" which checks neighborhood.
-                    # For reward, we minimally expect non-overlapping ships that satisfy counts.
-                    # Stricter: enforce no touching.
-                    
-                    # Check bounds
-                    if r < 0 or r >= h: 
-                         valid_placement = False; break
-                    
-                    # Check overlap
-                    if np.sum(board[r, c:c+size]) > 0:
-                        valid_placement = False; break
-                        
-                    board[r, c:c+size] = 1
-                    
-                else: # V
-                    if r + size > h:
-                        valid_placement = False; break
-                    
-                    if c < 0 or c >= w:
-                         valid_placement = False; break
-                         
-                    if np.sum(board[r:r+size, c]) > 0:
-                        valid_placement = False; break
-                        
-                    board[r:r+size, c] = 1
-            
-            if not valid_placement:
-                rewards.append(0.0)
+            if not (0 <= r < h and 0 <= c < w):
+                rewards.append(-1.0) # Invalid move
                 continue
                 
-            # Check row/col counts
-            row_counts = np.sum(board, axis=1).tolist()
-            col_counts = np.sum(board, axis=0).tolist()
+            # Check if already shot
+            shots_grid = np.array(meta['shots_grid'])
+            if shots_grid[r, c] != 0:
+                rewards.append(-1.0) # Already shot
+                continue
             
-            if row_counts == meta['row_counts'] and col_counts == meta['col_counts']:
-                 # Also check if fleet matches?
-                 # If counts match, it's usually correct, but theoretically you could have wrong fleet with same counts (maybe?).
-                 # Let's simple check counts first.
-                 rewards.append(1.0)
+            # Check Hit or Miss
+            ship_board = np.array(meta['ship_board'])
+            
+            if ship_board[r, c] == 1:
+                # HIT Logic
+                reward = 1.0 # Base Hit
+                
+                # Check for +2 (Hit on ship that already has a hit) and +10 (All ships sunk)
+                # To do this, we need ship ownership.
+                # Assuming ship_id_grid is in metadata (added in update)
+                if 'ship_id_grid' in meta:
+                    ship_id_grid = np.array(meta['ship_id_grid'])
+                    hit_ship_id = ship_id_grid[r, c]
+                    
+                    # 1. Check if this ship ID was already partially hit elsewhere
+                    # Find all cells belonging to this ship
+                    ship_cells = (ship_id_grid == hit_ship_id)
+                    # Check if any of these cells are already in shots_grid as Hit (2)
+                    already_hit_mask = (shots_grid == 2) & ship_cells
+                    if np.any(already_hit_mask):
+                        reward = 2.0 # Upgrade to +2
+                
+                    # 2. Check if this shot SINKS the LAST ship (Winning Move)
+                    # Simulate the shot
+                    shots_grid[r, c] = 2 # Apply hit locally for check
+                    
+                    # Check if ALL ships are sunk
+                    # Iterate over all unique ship IDs > 0
+                    all_sunk = True
+                    unique_ships = np.unique(ship_id_grid)
+                    for s_id in unique_ships:
+                        if s_id == 0: continue
+                        # Check if all cells for s_id are hit
+                        s_cells = (ship_id_grid == s_id)
+                        if not np.all(shots_grid[s_cells] == 2):
+                            all_sunk = False
+                            break
+                    
+                    if all_sunk:
+                        reward = 10.0 # Override with +10 for win
+                
+                rewards.append(reward)
             else:
-                rewards.append(0.0)
+                rewards.append(0.0) # Miss
                 
         return rewards
 
