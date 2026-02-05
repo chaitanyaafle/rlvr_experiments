@@ -200,19 +200,38 @@ def main():
         tokenizer.pad_token = tokenizer.eos_token
     
     # Create formatting function for messages format
-    # Unsloth tests with single example first, then uses batched
+    # Unsloth expects a list of strings to be returned
     def formatting_func(example):
         """Convert messages format to chat template string."""
-        # Handle single example (dict with 'messages' key containing a list of message dicts)
         messages = example['messages']
         
-        # Apply chat template to convert messages to string
-        text = tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=False
-        )
-        return text
+        # Check if this is a batch or single example
+        # Single example: messages is a list of dicts like [{"role": "user", ...}, {"role": "assistant", ...}]
+        # Batch: messages could be a list of lists
+        
+        if isinstance(messages, list) and len(messages) > 0:
+            # Check if first element is a dict (single example) or a list (batch)
+            if isinstance(messages[0], dict):
+                # Single example - messages is [{"role": ..., "content": ...}, ...]
+                text = tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=False
+                )
+                return [text]
+            else:
+                # Batch - messages is a list of message lists
+                texts = []
+                for msg_list in messages:
+                    text = tokenizer.apply_chat_template(
+                        msg_list,
+                        tokenize=False,
+                        add_generation_prompt=False
+                    )
+                    texts.append(text)
+                return texts
+        
+        return []
     
     # Training config
     print("\n--- Configuring Training ---")
