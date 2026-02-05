@@ -200,18 +200,19 @@ def main():
         tokenizer.pad_token = tokenizer.eos_token
     
     # Create formatting function for messages format
-    def formatting_func(examples):
-        """Convert messages format to chat template strings."""
-        texts = []
-        for messages in examples['messages']:
-            # Apply chat template to convert messages to string
-            text = tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=False
-            )
-            texts.append(text)
-        return texts
+    # Unsloth tests with single example first, then uses batched
+    def formatting_func(example):
+        """Convert messages format to chat template string."""
+        # Handle single example (dict with 'messages' key containing a list of message dicts)
+        messages = example['messages']
+        
+        # Apply chat template to convert messages to string
+        text = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=False
+        )
+        return text
     
     # Training config
     print("\n--- Configuring Training ---")
