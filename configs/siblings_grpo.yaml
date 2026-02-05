@@ -1,0 +1,42 @@
+# Stage 3: GRPO Refinement on Sibling Tasks
+# Reinforcement learning to maximize correctness on arithmetic tasks
+# Model starts from Stage 2 (siblings SFT) checkpoint
+
+model:
+  name_or_path: outputs/stage2_siblings_sft
+  torch_dtype: auto
+  device_map: auto
+
+environment:
+  name: arithmetic_multi
+  tasks:
+    - basic_arithmetic
+    - chain_sum
+    - leg_counting
+    - fraction_simplification
+  samples_per_task: 500
+
+generation:
+  max_completion_length: 512
+  max_prompt_length: 256
+  num_generations: 4
+  temperature: 0.7
+  top_p: 0.9
+
+training:
+  output_dir: outputs/stage3_siblings_grpo
+  learning_rate: 5.0e-6
+  num_train_epochs: 1
+  max_steps: 500
+  gradient_accumulation_steps: 4
+  logging_steps: 10
+  save_strategy: steps
+  save_steps: 100
+  bf16: true
+  report_to:
+    - tensorboard
+
+reward:
+  # Reward weights for different signals
+  correctness_weight: 1.0
+  format_weight: 0.1  # Bonus for proper <think>...</think> format

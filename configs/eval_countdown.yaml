@@ -1,0 +1,17 @@
+# Evaluation Config for Countdown (Held-Out Target)
+
+model:
+  name_or_path: outputs/stage3_siblings_grpo
+  max_seq_length: 2048
+
+evaluation:
+  task: countdown
+  num_samples: 200
+  seed: 42
+  verbose: true
+  
+  # Generation settings
+  max_new_tokens: 512
+  temperature: 0.1
+
+output_dir: outputs/evaluation/countdown

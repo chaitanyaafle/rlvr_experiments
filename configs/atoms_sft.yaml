@@ -1,0 +1,37 @@
+# Stage 1: SFT on Atomic Arithmetic Skills
+# Pre-training on foundational operations before sibling tasks
+
+model:
+  name_or_path: Qwen/Qwen2.5-1.5B-Instruct
+  max_seq_length: 1024
+  load_in_4bit: true
+  lora:
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    target_modules:
+      - q_proj
+      - k_proj
+      - v_proj
+      - o_proj
+      - gate_proj
+      - up_proj
+      - down_proj
+
+data:
+  data_files: data_gen/data/atoms/*.parquet
+
+training:
+  output_dir: outputs/stage1_atoms_sft
+  learning_rate: 2.0e-4
+  num_train_epochs: 2
+  batch_size: 8
+  gradient_accumulation_steps: 4
+  warmup_ratio: 0.03
+  logging_steps: 10
+  save_strategy: epoch
+  bf16: true
+  optim: adamw_8bit
+  report_to:
+    - tensorboard
+  seed: 42

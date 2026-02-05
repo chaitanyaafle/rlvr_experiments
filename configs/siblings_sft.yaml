@@ -1,0 +1,43 @@
+# Stage 2: SFT on Sibling Tasks (Arithmetic)
+# Training on: basic_arithmetic, chain_sum, leg_counting, fraction_simplification
+# Model starts from Stage 1 (atoms) checkpoint
+
+model:
+  # Use Stage 1 output as starting point
+  name_or_path: outputs/stage1_atoms_sft
+  max_seq_length: 1024
+  load_in_4bit: true
+  lora:
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    target_modules:
+      - q_proj
+      - k_proj
+      - v_proj
+      - o_proj
+      - gate_proj
+      - up_proj
+      - down_proj
+
+data:
+  data_files:
+    - data_gen/data/siblings/train_sibling_basic_arithmetic_sft.parquet
+    - data_gen/data/siblings/train_sibling_chain_sum_sft.parquet
+    - data_gen/data/siblings/train_sibling_leg_counting_sft.parquet
+    - data_gen/data/siblings/train_sibling_fraction_simplification_sft.parquet
+
+training:
+  output_dir: outputs/stage2_siblings_sft
+  learning_rate: 1.0e-4  # Lower LR for continued training
+  num_train_epochs: 2
+  batch_size: 8
+  gradient_accumulation_steps: 4
+  warmup_ratio: 0.03
+  logging_steps: 10
+  save_strategy: epoch
+  bf16: true
+  optim: adamw_8bit
+  report_to:
+    - tensorboard
+  seed: 42

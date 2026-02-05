@@ -7,6 +7,7 @@ from environments.gsm8k import GSM8KEnvironment
 from environments.maze_env import MazeEnvironment
 from environments.syllogism_env import SyllogismEnvironment
 from environments.battleship_env import BattleshipEnvironment
+from environments.arithmetic_env import ArithmeticEnvironment
 
 def load_config(config_path):
     with open(config_path, 'r') as f:
@@ -30,8 +31,11 @@ def get_environment(config):
         return SyllogismEnvironment(config)
     elif name == 'battleship':
         return BattleshipEnvironment(config)
+    elif name == 'arithmetic_multi':
+        return ArithmeticEnvironment(config)
     else:
         raise ValueError(f"Unknown environment: {name}")
+
 
 def main():
     if len(sys.argv) < 2:
