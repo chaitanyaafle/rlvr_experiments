@@ -31,7 +31,7 @@ training:
   gradient_accumulation_steps: 4
   logging_steps: 10
   save_strategy: steps
-  save_steps: 100
+  save_steps: 50
   bf16: true
   report_to:
     - tensorboard
