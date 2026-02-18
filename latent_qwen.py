@@ -1,402 +1,367 @@
 
 import torch
 import torch.nn as nn
-from transformers import Qwen2ForCausalLM, Qwen2Model
+from transformers import Qwen2ForCausalLM
 from transformers.modeling_outputs import CausalLMOutputWithPast
-from typing import Optional, List, Union, Tuple
+from transformers.generation.logits_process import LogitsProcessor, LogitsProcessorList
 
 class LatentQwen2ForCausalLM(Qwen2ForCausalLM):
     def __init__(self, config, **kwargs):
         super().__init__(config)
         self.num_latent_thoughts = kwargs.pop('num_latent_thoughts', getattr(config, 'num_latent_thoughts', 0))
-        # We need the token IDs for control. Ideally, these are passed or set.
-        # For now, we'll assume they are attributes or look them up if passed.
-        self.think_token_id = None 
+        self.think_token_id = None
         
+        # Initialize embedding shortcut for easy access (used in coconut logic)
+        self.embedding = self.model.embed_tokens
+
     def set_special_token_ids(self, think_token_id):
         self.think_token_id = think_token_id
 
     def forward(
         self,
         input_ids: torch.LongTensor = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[List[torch.FloatTensor]] = None,
-        inputs_embeds: Optional[torch.FloatTensor] = None,
-        labels: Optional[torch.LongTensor] = None,
-        use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        cache_position: Optional[torch.LongTensor] = None,
+        attention_mask: torch.Tensor = None,
+        labels: torch.LongTensor = None,
         **kwargs,
-    ) -> Union[Tuple, CausalLMOutputWithPast]:
-        
-        # If we don't have the token ID, or no latent thoughts requested, check config
-        if self.think_token_id is None:
-            pass
+    ):
+        # Fallback if no think token or 0 latents
+        if self.think_token_id is None or self.num_latent_thoughts == 0:
+            return super().forward(input_ids=input_ids, attention_mask=attention_mask, labels=labels, **kwargs)
 
-        if self.num_latent_thoughts == 0 or self.think_token_id is None:
-            return super().forward(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                inputs_embeds=inputs_embeds,
-                labels=labels,
-                use_cache=use_cache,
-                output_attentions=output_attentions,
-                output_hidden_states=output_hidden_states,
-                return_dict=return_dict,
-                cache_position=cache_position,
-                **kwargs,
-            )
-
-        # Basic Check: Do we have `input_ids`? If using `inputs_embeds`, standard pass (unless we detect logic there, but keeping it simple).
-        if input_ids is None:
-             return super().forward(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                position_ids=position_ids,
-                past_key_values=past_key_values,
-                inputs_embeds=inputs_embeds,
-                labels=labels,
-                use_cache=use_cache,
-                output_attentions=output_attentions,
-                output_hidden_states=output_hidden_states,
-                return_dict=return_dict,
-                cache_position=cache_position,
-                **kwargs,
-            )
+        # 1. EXPAND INPUTS: Insert latent tokens if they are not already there?
+        # The user wants "parameter that controls how many steps". 
+        # We assume the input has ONE <think> and we expand it to N.
+        # This is strictly necessary because Coconut logic iterates over N latent tokens in the input.
         
-        # Search for <think> in input_ids
-        has_think = (input_ids == self.think_token_id).any()
+        # Check if we need to expand.
+        # If we are training, input_ids is (B, L).
+        # We find <think>.
         
-        if not has_think:
-            return super().forward(
-                input_ids=input_ids, 
-                past_key_values=past_key_values, 
-                attention_mask=attention_mask, 
-                position_ids=position_ids, 
-                use_cache=use_cache, 
-                labels=labels, 
-                output_attentions=output_attentions, 
-                output_hidden_states=output_hidden_states, 
-                return_dict=return_dict,
-                cache_position=cache_position,
-                **kwargs
-            )
-
-        # IMPORTANT: Splitting logic.
-        # We assume ONE <think> token per sequence for now.
-        
-        # Find index of <think>
-        batch_indices, think_indices = (input_ids == self.think_token_id).nonzero(as_tuple=True)
-        
-        model_kwargs = {
-            "use_cache": use_cache if use_cache is not None else self.config.use_cache,
-            "output_attentions": output_attentions,
-            "output_hidden_states": output_hidden_states,
-            "return_dict": return_dict,
-        }
-        model_kwargs.update(kwargs) # Pass extra kwargs
-        
-        if inputs_embeds is not None:
-             return super().forward(inputs_embeds=inputs_embeds, cache_position=cache_position, **model_kwargs)
-
-        input_ids_seq = input_ids
+        device = input_ids.device
         batch_size, seq_len = input_ids.shape
         
-        collected_logits = []
+        # We need to construct new_input_ids, new_mask, new_labels
+        # This is tricky in batch if <think> position varies. 
+        # We'll assume consistency or handle row-by-row like before but construct tensors.
+        
+        expanded_input_ids_list = []
+        expanded_mask_list = []
+        expanded_labels_list = []
+        
+        has_think = False
         
         for i in range(batch_size):
-            # Process single sequence
-            seq = input_ids[i]
-            idx = (seq == self.think_token_id).nonzero()
+            row_ids = input_ids[i]
+            row_mask = attention_mask[i] if attention_mask is not None else torch.ones_like(row_ids)
+            row_labels = labels[i] if labels is not None else torch.full_like(row_ids, -100) # Dummy
             
+            idx = (row_ids == self.think_token_id).nonzero()
             if len(idx) == 0:
-                # No think token, Standard pass
-                out = super().forward(
-                    input_ids=seq.unsqueeze(0),
-                    past_key_values=None, 
-                    cache_position=cache_position, # Warning: cache_position might be batched? 
-                    # If cache_position is (B, L), we need slice.
-                    # Usually it's (L,).
-                    **model_kwargs
-                )
-                collected_logits.append(out.logits.squeeze(0))
+                expanded_input_ids_list.append(row_ids)
+                expanded_mask_list.append(row_mask)
+                expanded_labels_list.append(row_labels)
                 continue
                 
-            idx = idx[0].item() # index of <think>
+            has_think = True
+            idx = idx[0].item() # Index of <think>
             
-            # 1. Prefix: seq[:idx+1]
-            prefix_ids = seq[:idx+1].unsqueeze(0)
+            # Structure: Prefix + <think>(original) + [Latent]*N + Suffix
+            # WAIT. Coconut replaces the embedding of the latent token with the PREVIOUS hidden state.
+            # So if we have `A <think> B`. 
+            # We want `A <think> [thought] [thought] ... B`.
+            # First <think>: Standard input. Produces hidden state h0.
+            # First [thought]: Input embedding replaced by h0. Produces h1.
+            # Second [thought]: Input embedding replaced by h1. Produces h2.
+            # ...
+            # Suffix B: Input embedding standard.
             
-            prefix_mask = None
-            if attention_mask is not None:
-                prefix_mask = attention_mask[i, :idx+1].unsqueeze(0)
+            # So we need to insert `num_latent_thoughts` tokens.
+            # What token ID? `think_token_id` is fine as placeholder.
             
-            prefix_cache_pos = None
-            if cache_position is not None:
-                # Assuming cache_position is (L,) or (1, L) or (B, L)
-                # If 1D, slice.
-                if cache_position.dim() == 1:
-                    prefix_cache_pos = cache_position[:idx+1]
-                elif cache_position.dim() == 2:
-                     # (B, L) ? Or (1, L)
-                     if cache_position.shape[0] == batch_size:
-                         prefix_cache_pos = cache_position[i, :idx+1].unsqueeze(0)
-                     else:
-                         prefix_cache_pos = cache_position[:, :idx+1]
+            prefix = row_ids[:idx+1] # Includes <think>
+            suffix = row_ids[idx+1:]
+            
+            latents = torch.full((self.num_latent_thoughts,), self.think_token_id, device=device, dtype=row_ids.dtype)
+            
+            new_row = torch.cat([prefix, latents, suffix])
+            expanded_input_ids_list.append(new_row)
+            
+            # Mask
+            prefix_mask = row_mask[:idx+1]
+            suffix_mask = row_mask[idx+1:]
+            latent_mask = torch.ones((self.num_latent_thoughts,), device=device, dtype=row_mask.dtype)
+            expanded_mask_list.append(torch.cat([prefix_mask, latent_mask, suffix_mask]))
+            
+            # Labels
+            prefix_labels = row_labels[:idx+1]
+            suffix_labels = row_labels[idx+1:]
+            latent_labels = torch.full((self.num_latent_thoughts,), -100, device=device, dtype=row_labels.dtype)
+            expanded_labels_list.append(torch.cat([prefix_labels, latent_labels, suffix_labels]))
 
-            # Construct kwargs for this step
-            step_kwargs = model_kwargs.copy()
-            step_kwargs['use_cache'] = True
+        if not has_think:
+            return super().forward(input_ids=input_ids, attention_mask=attention_mask, labels=labels, **kwargs)
+
+        # Pad the batch
+        # Simple padding to max length
+        max_len = max(len(x) for x in expanded_input_ids_list)
+        pad_id = self.config.pad_token_id if self.config.pad_token_id is not None else 0
+        
+        padded_ids = torch.full((batch_size, max_len), pad_id, device=device, dtype=input_ids.dtype)
+        padded_mask = torch.zeros((batch_size, max_len), device=device, dtype=input_ids.dtype) # 0 for padding? usually 0 is masked
+        # Transformers attention_mask: 1 for keep, 0 for mask.
+        
+        padded_labels = torch.full((batch_size, max_len), -100, device=device, dtype=input_ids.dtype)
+        
+        # position_ids?
+        # We should generate them or let model generate.
+        
+        for i in range(batch_size):
+            l = len(expanded_input_ids_list[i])
+            padded_ids[i, :l] = expanded_input_ids_list[i]
+            padded_mask[i, :l] = expanded_mask_list[i]
+            padded_labels[i, :l] = expanded_labels_list[i]
             
-            transformer_out = self.model(
-                input_ids=prefix_ids,
-                attention_mask=prefix_mask,
-                cache_position=prefix_cache_pos,
-                use_cache=True,
-                return_dict=True
+        input_ids = padded_ids
+        attention_mask = padded_mask
+        labels = padded_labels
+        
+        # Generate full position_ids
+        # (B, L_expanded)
+        # Note: If batch items have different padding start, we ideally mask/adjust position_ids?
+        # Standard transformers: 0..L-1, masked tokens are ignored. Left-padding handled by user.
+        # We assume standard right-padding or handle simple range.
+        position_ids = torch.arange(input_ids.shape[1], device=device, dtype=torch.long).unsqueeze(0).expand(batch_size, -1)
+        
+        # --- COCONUT LOGIC START ---
+        
+        # Identify latent indices
+        latent_indices_list = []
+        for i in range(batch_size):
+            indices = (input_ids[i] == self.think_token_id).nonzero().squeeze(-1)
+            # indices[0] is original. indices[1:] are latents.
+            if len(indices) > 1:
+                latent_indices_list.append(indices[1:])
+            else:
+                latent_indices_list.append(torch.tensor([], device=device, dtype=torch.long))
+
+        # Max number of passes needed
+        max_latents = max(len(l) for l in latent_indices_list)
+        
+        # Inputs Embeds
+        inputs_embeds = self.embedding(input_ids)
+        
+        kv_cache = None
+        current_pos = 0 # Track compute head
+        
+        latent_positions = [t.tolist() for t in latent_indices_list]
+        max_n_latents = max(len(l) for l in latent_positions)
+        
+        current_latent_idx = [0] * batch_size
+        
+        next_compute_start = 0
+        tokens_seq_len = input_ids.shape[1]
+        
+        logits_list = []
+        outputs = None # Store last output for hidden states
+        
+        while next_compute_start < tokens_seq_len:
+            # Determine next stop
+            stops = []
+            for b in range(batch_size):
+                latents = latent_positions[b]
+                idx = current_latent_idx[b]
+                if idx < len(latents):
+                    stops.append(latents[idx])
+                else:
+                    stops.append(tokens_seq_len)
+            
+            next_stop = min(stops)
+            
+            if to_update_indices := [b for b, latents in enumerate(latent_positions) 
+                                     if current_latent_idx[b] < len(latents) 
+                                     and latents[current_latent_idx[b]] == next_compute_start]:
+                
+                # Update embeddings with previous hidden state
+                # Need hidden states from previous chunk.
+                # `outputs` is from previous iteration.
+                if outputs is not None:
+                    # hidden_states reported by model is usually tuple of (L, B, S, H) or (B, S, H) depending.
+                    # Qwen2ForCausalLM returns CausalLMOutputWithPast. hidden_states is tuple.
+                    # We want Last Layer.
+                    last_layer_hidden = outputs.hidden_states[-1] # (B, S_chunk, H)
+                    
+                    for b in to_update_indices:
+                        h = last_layer_hidden[b, -1, :]
+                        inputs_embeds[b, next_compute_start, :] = h
+                        current_latent_idx[b] += 1
+                
+                next_stop = next_compute_start + 1
+            
+            if next_stop <= next_compute_start:
+                 next_stop = next_compute_start + 1
+                 
+            # Run Model for range
+            chunk_embeds = inputs_embeds[:, next_compute_start:next_stop, :]
+            chunk_mask = attention_mask[:, :next_stop]
+            chunk_pos_ids = position_ids[:, next_compute_start:next_stop]
+            
+            model_kwargs = {
+                "output_hidden_states": True,
+                "return_dict": True
+            }
+            model_kwargs.update(kwargs) # user args
+            model_kwargs["use_cache"] = True # Force True!
+            model_kwargs.pop("past_key_values", None)
+            model_kwargs.pop("inputs_embeds", None)
+            model_kwargs.pop("attention_mask", None)
+            model_kwargs.pop("labels", None)
+            model_kwargs.pop("position_ids", None)
+            model_kwargs.pop("cache_position", None)
+            model_kwargs.pop("num_logits_to_keep", None)
+            
+            # Convert DynamicCache to legacy tuple to avoid Accelerate/AMP issues
+            # REMOVED: Newer transformers require the object API (get_seq_length)
+            past_input = kv_cache
+            # if hasattr(kv_cache, "to_legacy_cache"):
+            #     past_input = kv_cache.to_legacy_cache()
+
+            # DEBUG prints removed
+            
+            outputs = super().forward(
+                inputs_embeds=chunk_embeds,
+                attention_mask=chunk_mask,
+                position_ids=chunk_pos_ids,
+                past_key_values=past_input,
+                **model_kwargs
             )
-            past_key_values = transformer_out.past_key_values
-            current_hidden = transformer_out.last_hidden_state[:, -1:, :] # (1, 1, hidden)
             
-            # Compute logits for prefix (exclude the last one which is <think>, we will replace it)
-            # transformer_out.last_hidden_state shape: (1, idx+1, hidden)
-            # Prefix logits: for 0..idx-1
-            # We want logits for the whole sequence eventually.
+            logits_list.append(outputs.logits)
+            kv_cache = outputs.past_key_values
             
-            # The logit for position `i` usually predicts `i+1`.
-            # `input_ids[idx]` is `<think>`. The logit at this position predicts `</think>`.
-            # We want this prediction to be based on Thoughts.
-            
-            # So:
-            # logits for 0..idx-1: Standard.
-            # logit for idx (<think>): Output of latent loop.
-            # logits for idx+1..end: Standard (based on new KV).
-            
-            prefix_hidden = transformer_out.last_hidden_state
-            # Store standard prefix logits?
-            # prefix_logits = self.lm_head(prefix_hidden)
-            
-            # 2. Latent Loop
-            # We start from the last hidden state of prefix (corresponding to <think>)
-            current_hidden = prefix_hidden[:, -1:, :] 
-            
-            for _ in range(self.num_latent_thoughts):
-                step_out = self.model(
-                    inputs_embeds=current_hidden,
-                    past_key_values=past_key_values,
-                    use_cache=True,
-                    return_dict=True
-                )
-                past_key_values = step_out.past_key_values
-                current_hidden = step_out.last_hidden_state
-                
-            # After loop, current_hidden is the "thought-processed" state for <think>.
-            # Generate the logit for <think> position
-            think_logit = self.lm_head(current_hidden) # (1, 1, V)
-            
-            # Prefix logits (excluding the standard think logit)
-            prefix_logits_prev = self.lm_head(prefix_hidden[:, :-1, :]) if idx > 0 else torch.empty(1, 0, self.config.vocab_size, device=input_ids.device, dtype=think_logit.dtype)
-            
-            # 3. Suffix
-            # Note: We need to adjust position_ids for suffix?
-            # The KV cache has grown by N steps.
-            # Transformers automatically handles position_ids if passed None and using Cache?
-            # Qwen2 usually uses rotary embeddings based on position_ids.
-            # The `past_key_values` has length `L_prefix + N`.
-            # The next token `</think>` should have position `L_prefix + N`?
-            # Or `L_prefix + 1`?
-            # Coconut usually implies "thinking takes time/positions".
-            # So tokens should be shifted.
-            # If we don't pass position_ids, models usually assume `past_key_values.shape[-2]`.
-            # So it will automatically shift.
-            
-            suffix_ids = seq[idx+1:].unsqueeze(0)
-            suffix_logits = torch.empty(1, 0, self.config.vocab_size, device=input_ids.device, dtype=think_logit.dtype)
-            
-            if suffix_ids.size(1) > 0:
-                # We assume position_ids will be inferred relative to past_key_values length
-                # Since we added N entries to PKV, the next position will be correct (shifted).
-                
-                # Check cache_position for suffix?
-                # If cache_position was provided, we must shift it too.
-                suffix_cache_pos = None
-                if cache_position is not None:
-                     # Suffix slice
-                     if cache_position.dim() == 1:
-                        suffix_cache_pos = cache_position[idx+1:] + self.num_latent_thoughts
-                     elif cache_position.dim() == 2:
-                        suffix_batch_slice = cache_position[i, idx+1:] if cache_position.shape[0] == batch_size else cache_position[:, idx+1:]
-                        suffix_cache_pos = suffix_batch_slice + self.num_latent_thoughts
-                        if cache_position.dim() == 2 and cache_position.shape[0] == batch_size:
-                             suffix_cache_pos = suffix_cache_pos.unsqueeze(0)
+            next_compute_start = next_stop
 
-                suffix_out = self.model(
-                    input_ids=suffix_ids,
-                    past_key_values=past_key_values,
-                    use_cache=True,
-                    return_dict=True,
-                    cache_position=suffix_cache_pos
-                )
-                suffix_logits = self.lm_head(suffix_out.last_hidden_state)
-            
-            # Combine
-            # Logic: prefix (0..idx-1) + think_logit (at idx) + suffix (idx+1..end)
-            # Total length = idx + 1 + len(suffix) = len(seq)
-            
-            full_seq_logits = torch.cat([prefix_logits_prev, think_logit, suffix_logits], dim=1) # (1, L, V)
-            collected_logits.append(full_seq_logits.squeeze(0))
-            
-        # Stack check
-        # Since lengths differ (due to prefix/suffix splits + latent fixed size), 
-        # naive stacking requires padding handling.
-        # But if the original batch was padded, `seq` includes padding.
-        # `prefix` length + `suffix` length = original length.
-        # `latent` is constant N.
-        # So `total length = original length + N`.
-        # So we can stack!
+        # Concatenate logits
+        full_logits = torch.cat(logits_list, dim=1) # (B, L, V)
         
-        final_logits = torch.stack(collected_logits) # (B, L+N, V)
-        
-        # Handle loss if labels provided
+        # Loss computation?
+        # If labels are provided, super() usually computes loss, but we bypassed it.
         loss = None
         if labels is not None:
-            # We need to modify labels to match the new shape (insert ignore_index for latents)
-            # labels: (B, L)
-            # construct new labels (B, L+N)
-            # We need to insert N ignore_indices AFTER the <think> token index.
-            
-            # Iterate and construct (meh, slow but correct)
-            new_labels_list = []
-            ignore = -100 # standard
-            
-            for i in range(batch_size):
-                lab = labels[i]
-                seq = input_ids[i]
-                idx = (seq == self.think_token_id).nonzero()
-                if len(idx) == 0:
-                    # Just pad N to end? Or N doesn't exist?
-                    # If we added latent steps... wait.
-                    # If NO think token was found, we returned standard logits (L).
-                    # But now we are stacking them.
-                    # If some have thoughts and some don't, shapes mismatch! (L+N vs L).
-                    # If mixed batch: We must PAD the "no think" ones to matches?
-                    # Or force consistency.
-                    pass 
-                
-                idx = idx[0].item()
-                # Labels corresponding to prefix: lab[:idx+1]
-                # Labels for latents: ignore * N
-                # Labels for suffix: lab[idx+1:]
-                
-                # Note: `logits` are predictions for the NEXT token.
-                # `labels` usually align such that `labels[i]` is target for `logits[i]`.
-                # Prefix logits (incl <think>) -> predict first thought? No.
-                # The logit at `<think>` input step -> predicts... first thought? 
-                # Or do we treat latent steps as "prediction of nothing"?
-                # Actually, the logit at `<think>` predicts `labels[idx+1]` (the token after think, which is `</think>` in training data).
-                # But we insert N steps.
-                # So logit at `<think>` -> first latent step.
-                # logit at last latent step -> predicts `</think>`.
-                # So we shift labels.
-                
-                prefix_lab = lab[:idx+1]
-                suffix_lab = lab[idx+1:]
-                latent_lab = torch.full((self.num_latent_thoughts,), ignore, dtype=lab.dtype, device=lab.device)
-                
-                new_l = torch.cat([prefix_lab, latent_lab, suffix_lab], dim=0)
-                new_labels_list.append(new_l)
-            
-            new_labels = torch.stack(new_labels_list)
-            
-            # Compute loss
-            # Shift logits/labels standard way: logits[..., :-1, :], labels[..., 1:]
-            shift_logits = final_logits[..., :-1, :].contiguous()
-            shift_labels = new_labels[..., 1:].contiguous()
-            
+            # Shift
+            shift_logits = full_logits[..., :-1, :].contiguous()
+            shift_labels = labels[..., 1:].contiguous()
             loss_fct = nn.CrossEntropyLoss()
             loss = loss_fct(shift_logits.view(-1, self.config.vocab_size), shift_labels.view(-1))
             
         return CausalLMOutputWithPast(
             loss=loss,
-            logits=final_logits,
-            past_key_values=None, # complex to combine lists
-            hidden_states=None,
-            attentions=None,
+            logits=full_logits,
+            past_key_values=kv_cache,
+            hidden_states=outputs.hidden_states, # Only last chunk?
         )
 
     def prepare_inputs_for_generation(self, input_ids, past_key_values=None, attention_mask=None, inputs_embeds=None, **kwargs):
-        return super().prepare_inputs_for_generation(input_ids, past_key_values=past_key_values, attention_mask=attention_mask, inputs_embeds=inputs_embeds, **kwargs)
+        # We need to handle the mismatch between `input_ids` (visible) and `past_key_values` (visible + latents).
+        # Check if we have past_key_values and if they are longer than input_ids + standard attention mask.
+        
+        # Standard preparation first
+        model_inputs = super().prepare_inputs_for_generation(input_ids, past_key_values=past_key_values, attention_mask=attention_mask, inputs_embeds=inputs_embeds, **kwargs)
+        
+        # If we have a past, check its length.
+        if past_key_values is not None:
+            # past_key_values is typically a tuple of tuples. ((k, v), ...)
+            # We just need the length of the sequence in the cache.
+            # Qwen/HF implementations vary, but usually `past_key_values[0][0].shape[2]` is seq_len.
+            
+            past_length = 0
+            if hasattr(past_key_values, "get_seq_length"):
+                past_length = past_key_values.get_seq_length()
+            else:
+                 # Legacy tuple cache
+                 past_length = past_key_values[0][0].shape[-2]
+            
+            # The `attention_mask` in `model_inputs` is usually constructed based on `input_ids` shape.
+            # If `past_length` > mask length, we need to extend the mask.
+            
+            if "attention_mask" in model_inputs:
+                mask = model_inputs["attention_mask"]
+                if mask.shape[1] < past_length + input_ids.shape[1]: 
+                     # input_ids is usually length 1 during generation step (except first).
+                     # Wait, `prepare_inputs` is called. `input_ids` passed here is usually just the *new* tokens if past is present.
+                     # But `attention_mask` passed in kwargs is usually the full mask?
+                     # Let's check `attention_mask` shape.
+                     
+                     # HF `generate` maintains `attention_mask`. 
+                     # If we injected tokens secretly, the mask maintained by `generate` is too short.
+                     # We must pad it with 1s to the left (prefix) or ensure logic holds.
+                     
+                     diff = (past_length + input_ids.shape[1]) - mask.shape[1]
+                     if diff > 0:
+                         # We append 1s to the mask? 
+                         # Actually the latent tokens are 'in the past', so they should be 1s.
+                         # We prepend/append to match the `past_key_values` structure.
+                         # Usually mask aligns with `past + input`.
+                         
+                         ones = torch.ones((mask.shape[0], diff), device=mask.device, dtype=mask.dtype)
+                         model_inputs["attention_mask"] = torch.cat([ones, mask], dim=1)
+        
+        return model_inputs
 
     def generate(self, input_ids=None, **kwargs):
-        # We need to force </think> and <answer> after <think>.
-        # Since our forward pass handles the latent steps when it sees <think>, 
-        # the NEXT token generated should be </think>.
+        # Logic: 
+        # 1. Check if we are doing latent generation.
+        #    Condition: input_ids ends with <think>.
+        # 2. If so, forward pass will act normally (expand and compute latents).
+        # 3. We must ensure the NEXT generated token is </think>.
         
-        # We can use a LogitsProcessor to force this.
-        from transformers.generation.logits_process import LogitsProcessor, LogitsProcessorList
+        if input_ids is None:
+             return super().generate(**kwargs)
 
-        class LatentControlLogitsProcessor(LogitsProcessor):
-            def __init__(self, tokenizer, think_id, close_think_id, answer_id):
-                self.think_id = think_id
-                self.close_think_id = close_think_id
-                self.answer_id = answer_id
-                self.state = "start" # start -> thinking -> answering
+        # Retrieve think_token_id
+        think_id = self.think_token_id
+        
+        should_add_processor = False
+        if think_id is not None:
+            # Check last token of inputs
+            # input_ids is (B, L)
+            last_tokens = input_ids[:, -1]
+            if (last_tokens == think_id).any():
+                should_add_processor = True
+
+        if should_add_processor:
+            # We add a LogitsProcessor that forces </think> immediately after the latent expansion.
             
-            def __call__(self, input_ids, scores):
-                # input_ids: (batch, seq_len)
-                # We assume batch size 1 for simplicity regarding state, or independent processing.
-                # If batch size > 1, this state machine needs to be per-row.
-                
-                # Naive implementation: iterate usage
-                # We'll just enforce:
-                # If last token was <think>, force </think>.
-                # If last token was </think>, force <answer>.
-                
-                # Get last token
-                last_token = input_ids[:, -1]
-                
-                # Create mask to force token (set all to -inf except target)
-                # Clone scores to avoid side effects
-                
-                # Check where last_token == think_id
-                think_mask = (last_token == self.think_id)
-                if think_mask.any():
-                    # For these rows, force close_think_id
-                    scores[think_mask, :] = -float('inf')
-                    scores[think_mask, self.close_think_id] = 0
-                
-                # Check where last_token == close_think_id
-                close_mask = (last_token == self.close_think_id)
-                if close_mask.any():
-                     # For these rows, force answer_id
-                    scores[close_mask, :] = -float('inf')
-                    scores[close_mask, self.answer_id] = 0
+            from transformers.generation.logits_process import LogitsProcessor, LogitsProcessorList
 
-                return scores
+            class LatentControlLogitsProcessor(LogitsProcessor):
+                def __init__(self, think_id, close_think_id):
+                    self.think_id = think_id
+                    self.close_think_id = close_think_id
+                
+                def __call__(self, input_ids, scores):
+                    # input_ids: (B, L)
+                    last = input_ids[:, -1]
+                    
+                    # Case 1: Last visible token was <think>.
+                    # This means we just processed the prompt + latents (in forward).
+                    # We must close the thought.
+                    mask_think = (last == self.think_id)
+                    if mask_think.any():
+                        # Force </think>
+                        scores[mask_think, :] = -float('inf')
+                        scores[mask_think, self.close_think_id] = 0
+                    
+                    # We do NOT force <answer> after </think>.
+                    # The model triggers generation "as usual".
+                    return scores
 
-        # Identify token IDs
-        # We assume self.think_token_id is set.
-        if self.think_token_id is not None and getattr(self, 'close_think_id', None) is not None and getattr(self, 'answer_id', None) is not None:
-             processor = LatentControlLogitsProcessor(
-                 tokenizer=None, 
-                 think_id=self.think_token_id, 
-                 close_think_id=self.close_think_id, 
-                 answer_id=self.answer_id
-             )
-             
-             logits_processor = kwargs.get("logits_processor", LogitsProcessorList())
-             logits_processor.append(processor)
-             kwargs["logits_processor"] = logits_processor
-             
-        # Ideally we'd add this processor. 
-        # But for now, let's fix the crash first.
-        # User requirement "manually applied" might just mean "in the dataset training" and "in the rollout logic".
-        # If I fix the crash, GRPO training loop might work.
-        
+            # Create processor
+            close_think_id = getattr(self, 'close_think_id', getattr(self, 'close_think_token_id', None))
+            
+            if close_think_id is not None:
+                proc = LatentControlLogitsProcessor(think_id, close_think_id)
+                lp = kwargs.get('logits_processor', LogitsProcessorList())
+                lp.append(proc)
+                kwargs['logits_processor'] = lp
+
         return super().generate(input_ids, **kwargs)
-
