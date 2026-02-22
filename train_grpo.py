@@ -8,6 +8,7 @@ from environments.maze_env import MazeEnvironment
 from environments.syllogism_env import SyllogismEnvironment
 from environments.battleship_env import BattleshipEnvironment
 from environments.arithmetic_env import ArithmeticEnvironment
+from environments.reasoning_gym_env import ReasoningGymEnvironment
 
 def load_config(config_path):
     with open(config_path, 'r') as f:
@@ -33,6 +34,8 @@ def get_environment(config):
         return BattleshipEnvironment(config)
     elif name == 'arithmetic_multi':
         return ArithmeticEnvironment(config)
+    elif name == 'reasoning_gym':
+        return ReasoningGymEnvironment(config)
     else:
         raise ValueError(f"Unknown environment: {name}")
 
