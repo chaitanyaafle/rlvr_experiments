@@ -39,7 +39,8 @@ training:
   bf16: true
   logging_steps: 1          # Log every step for detailed reward curves
   save_strategy: steps
-  save_steps: 100            # Checkpoint every 100 steps (~5 checkpoints)
+  save_steps: 25             # Checkpoint every 25 steps (~50 min) for resume safety
+  save_total_limit: 3         # Auto-delete old checkpoints, keep only last 3
   max_steps: 500
   report_to: ["tensorboard"]  # TensorBoard logging
   warmup_ratio: 0.05         # 25 warmup steps for stable early training

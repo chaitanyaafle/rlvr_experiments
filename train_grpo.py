@@ -116,6 +116,7 @@ def main():
         push_to_hub=training_conf.get('push_to_hub', False),
         save_strategy=training_conf.get('save_strategy', 'steps'),
         save_steps=training_conf.get('save_steps', 10),
+        save_total_limit=training_conf.get('save_total_limit', None),
         max_steps=max_steps,
         warmup_ratio=training_conf.get('warmup_ratio', 0.0),
     )

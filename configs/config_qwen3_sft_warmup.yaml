@@ -26,5 +26,6 @@ training:
   bf16: true
   logging_steps: 10
   save_strategy: epoch
+  save_total_limit: 2         # Keep only last 2 epoch checkpoints
   save_steps: 100
   report_to: []
