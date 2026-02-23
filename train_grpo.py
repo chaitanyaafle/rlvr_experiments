@@ -98,6 +98,15 @@ def main():
     model.generation_config.stop_strings = stop_strings
     print(f"  stop_strings: {stop_strings}")
     
+    # Patch model.generate to inject tokenizer (required by transformers for stop_strings,
+    # but GRPOTrainer in this TRL version doesn't pass it automatically)
+    _original_generate = model.generate
+    def _generate_with_tokenizer(*args, **kwargs):
+        if 'tokenizer' not in kwargs:
+            kwargs['tokenizer'] = tokenizer
+        return _original_generate(*args, **kwargs)
+    model.generate = _generate_with_tokenizer
+    
     # Training Arguments
     print("Configuring training arguments...")
     training_conf = config['training']
