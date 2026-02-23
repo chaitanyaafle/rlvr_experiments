@@ -117,6 +117,7 @@ def main():
         save_strategy=training_conf.get('save_strategy', 'steps'),
         save_steps=training_conf.get('save_steps', 10),
         max_steps=max_steps,
+        warmup_ratio=training_conf.get('warmup_ratio', 0.0),
     )
 
     # Trainer

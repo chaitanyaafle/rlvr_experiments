@@ -1,18 +1,19 @@
 # ============================================================================
-# GRPO Training: Countdown task on Qwen3-4B-Base
+# GRPO Training: Countdown task on Qwen3-4B-Base (SFT-warmed)
 # ============================================================================
 # Usage: python train_grpo.py configs/config_qwen3_countdown.yaml
 #
-# IMPORTANT: Run SFT warmup first to teach the model <think>/<answer> format:
-#   python data_gen/generate_sft_warmup.py
-#   python train_sft.py configs/config_qwen3_sft_warmup.yaml
-# Then change model.name_or_path below to results/qwen3_sft_warmup
+# Prerequisites:
+#   1. python data_gen/generate_sft_warmup.py
+#   2. python train_sft.py configs/config_qwen3_sft_warmup.yaml
+#   3. python test_grpo.py configs/config_qwen3_countdown.yaml  (smoke test)
 #
-# Designed for a single A100 (80GB). 500 steps ~2-3 hours.
+# Designed for a single A100 (80GB). 500 steps ~17-25 hours.
+# Monitor: tensorboard --logdir results/grpo_qwen3_countdown
 # ============================================================================
 
 model:
-  name_or_path: Qwen/Qwen3-4B-Base  # Change to results/qwen3_sft_warmup after warmup
+  name_or_path: results/qwen3_sft_warmup
   torch_dtype: bfloat16
   device_map: auto
 
@@ -36,11 +37,12 @@ training:
   gradient_accumulation_steps: 8
   num_train_epochs: 2
   bf16: true
-  logging_steps: 10
+  logging_steps: 1          # Log every step for detailed reward curves
   save_strategy: steps
-  save_steps: 100
+  save_steps: 100            # Checkpoint every 100 steps (~5 checkpoints)
   max_steps: 500
-  report_to: []
+  report_to: ["tensorboard"]  # TensorBoard logging
+  warmup_ratio: 0.05         # 25 warmup steps for stable early training
 
 # --- Generation (GRPO rollouts) ---
 generation:
