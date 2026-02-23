@@ -34,7 +34,8 @@ seed: 42
 training:
   output_dir: results/grpo_qwen3_countdown
   learning_rate: 5.0e-6
-  gradient_accumulation_steps: 8
+  per_device_train_batch_size: 1   # 1 prompt per micro-batch (default 8 is way too much)
+  gradient_accumulation_steps: 4   # Effective batch = 4 prompts per step
   num_train_epochs: 2
   bf16: true
   logging_steps: 1          # Log every step for detailed reward curves

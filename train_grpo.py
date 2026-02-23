@@ -110,6 +110,7 @@ def main():
         output_dir=training_conf['output_dir'],
         learning_rate=float(training_conf['learning_rate']),
         remove_unused_columns=False,
+        per_device_train_batch_size=training_conf.get('per_device_train_batch_size', 1),
         gradient_accumulation_steps=training_conf.get('gradient_accumulation_steps', 1),
         num_train_epochs=training_conf.get('num_train_epochs', 1),
         bf16=training_conf.get('bf16', False),
