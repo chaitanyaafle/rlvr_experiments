@@ -98,15 +98,6 @@ def main():
     model.generation_config.stop_strings = stop_strings
     print(f"  stop_strings: {stop_strings}")
     
-    # Patch model.generate to inject tokenizer (required by transformers for stop_strings,
-    # but GRPOTrainer in this TRL version doesn't pass it automatically)
-    _original_generate = model.generate
-    def _generate_with_tokenizer(*args, **kwargs):
-        if 'tokenizer' not in kwargs:
-            kwargs['tokenizer'] = tokenizer
-        return _original_generate(*args, **kwargs)
-    model.generate = _generate_with_tokenizer
-    
     # Training Arguments
     print("Configuring training arguments...")
     training_conf = config['training']
@@ -145,6 +136,24 @@ def main():
         train_dataset=dataset,
         processing_class=tokenizer,
     )
+    
+    # Patch trainer's generate to inject tokenizer for stop_strings support
+    # GRPOTrainer calls unwrapped_model.generate() without tokenizer=,
+    # but transformers requires it when stop_strings are in generation_config
+    _orig_generate_single = trainer._generate_single_turn
+    def _patched_generate_single(prompts, images=None):
+        unwrapped = trainer.accelerator.unwrap_model(trainer.model)
+        _orig_gen = unwrapped.generate
+        def _gen_with_tok(*args, **kwargs):
+            kwargs.setdefault('tokenizer', tokenizer)
+            return _orig_gen(*args, **kwargs)
+        unwrapped.generate = _gen_with_tok
+        try:
+            result = _orig_generate_single(prompts, images)
+        finally:
+            unwrapped.generate = _orig_gen
+        return result
+    trainer._generate_single_turn = _patched_generate_single
 
     # Train
     print("Starting training...")
