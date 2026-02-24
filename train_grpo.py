@@ -3,35 +3,11 @@ import torch
 import yaml
 from transformers import AutoModelForCausalLM
 from trl import GRPOConfig, GRPOTrainer
-from environments.gsm8k import GSM8KEnvironment
-from environments.maze_env import MazeEnvironment
-from environments.syllogism_env import SyllogismEnvironment
-from environments.battleship_env import BattleshipEnvironment
+from environments import load_environment
 
 def load_config(config_path):
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
-
-def get_environment(config):
-    env_config = config.get('environment', {})
-    if not env_config:
-        # Fallback for legacy config or direct dataset inference
-        if config.get('data', {}).get('dataset_name') == 'openai/gsm8k':
-            return GSM8KEnvironment(config)
-        else:
-            raise ValueError("Could not determine environment from config.")
-            
-    name = env_config.get('name')
-    if name == 'gsm8k':
-        return GSM8KEnvironment(config)
-    elif name == 'maze':
-        return MazeEnvironment(config)
-    elif name == 'syllogism':
-        return SyllogismEnvironment(config)
-    elif name == 'battleship':
-        return BattleshipEnvironment(config)
-    else:
-        raise ValueError(f"Unknown environment: {name}")
 
 def main():
     if len(sys.argv) < 2:
@@ -44,7 +20,7 @@ def main():
 
     # Initialize Environment
     print("Initializing Environment...")
-    env = get_environment(config)
+    env = load_environment(config)
     
     # Load and Process Dataset
     dataset = env.get_dataset(config)
