@@ -106,6 +106,7 @@ def main():
         bf16=training_conf.get('bf16', False),
         max_completion_length=gen_conf.get('max_completion_length', 1024),
         num_generations=gen_conf.get('num_generations', 4),
+        generation_batch_size=gen_conf.get('num_generations', 4),
         temperature=gen_conf.get('temperature', 0.7),
         report_to=training_conf.get('report_to', []),
         logging_steps=training_conf.get('logging_steps', 10),
@@ -114,7 +115,7 @@ def main():
         save_steps=training_conf.get('save_steps', 10),
         save_total_limit=training_conf.get('save_total_limit', None),
         max_steps=max_steps,
-        warmup_ratio=training_conf.get('warmup_ratio', 0.0),
+        warmup_steps=training_conf.get('warmup_steps', 0),
     )
 
     # Trainer

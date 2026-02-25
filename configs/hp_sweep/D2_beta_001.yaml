@@ -38,7 +38,7 @@ training:
   save_total_limit: 2
   max_steps: 350
   report_to: ["tensorboard"]
-  warmup_ratio: 0.05
+  warmup_steps: 18
 
 generation:
   max_completion_length: 1024
