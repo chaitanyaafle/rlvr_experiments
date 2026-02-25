@@ -9,7 +9,7 @@ peft>=0.7.0
 bitsandbytes>=0.41.0
 
 # Training
-trl>=0.15.0  # Required for stop_strings support in GRPOConfig
+trl>=0.27.0  # >=0.27 required for cispo loss_type; >=0.17 for dr_grpo
 
 # Data
 reasoning-gym
@@ -21,3 +21,4 @@ pyarrow>=14.0.0
 pyyaml>=6.0
 tqdm
 math-verify
+tensorboard
