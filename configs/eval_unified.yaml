@@ -1,0 +1,42 @@
+# Unified evaluation config
+# Usage:
+#   python evaluate_unified.py configs/eval_unified.yaml
+#   python evaluate_unified.py configs/eval_unified.yaml --checkpoint path/to/ckpt
+#   python evaluate_unified.py configs/eval_unified.yaml --output my_results/
+
+model:
+  name_or_path: Qwen2-0.5B-GRPO-Maze/checkpoint-400
+  torch_dtype: auto
+  device_map: auto
+
+generation:
+  max_new_tokens: 1024
+  # temperature: 1.0   # uncomment to use sampling instead of greedy
+
+evaluation:
+  num_samples: 50          # per environment (will be capped to dataset size)
+  output_dir: eval_results/
+  save_samples: false      # set true to save full completions + ground truths
+
+# List every environment to evaluate. Each entry maps directly to the
+# 'environment' config block that ReasoningGymEnvironment expects.
+# Any task listed in REASONING_GYM_TASKS is valid here.
+# Extra keys (min_dist, max_dist, …) are forwarded to reasoning_gym verbatim.
+environments:
+  - name: maze
+    size: 20
+    seed: 42
+    min_dist: 2
+    max_dist: 5
+
+  - name: countdown
+    size: 20
+    seed: 42
+
+  - name: knights_knaves
+    size: 20
+    seed: 42
+
+  - name: basic_arithmetic
+    size: 20
+    seed: 42
