@@ -1,7 +1,7 @@
 model:
-  name_or_path: Qwen/Qwen2-0.5B-Instruct
-  torch_dtype: auto
-  device_map: auto
+  name_or_path: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+  torch_dtype: float32
+  device_map: cpu
 
 data:
   dataset_name: openai/gsm8k
@@ -15,7 +15,8 @@ training:
   learning_rate: 1.0e-5
   gradient_accumulation_steps: 16
   num_train_epochs: 1
-  bf16: true
+  bf16: false
+  fp16: false
   logging_steps: 10
   save_strategy: steps
   save_steps: 100
@@ -24,9 +25,11 @@ training:
     - tensorboard
 
 generation:
-  max_completion_length: 512
+  max_completion_length: 256
+  temperature: 0.7
   num_generations: 4
-  max_prompt_length: 1024
+  max_prompt_length: 512
+
 
 system_prompt: |
   A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The assistant first thinks about the reasoning process in the mind and then provides the user with the answer. The reasoning process and answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., <think> reasoning process here </think><answer> answer here </answer>

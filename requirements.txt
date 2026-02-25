@@ -1,0 +1,23 @@
+# RLVR Experiments Dependencies
+# For Lightning AI (A100)
+
+# Core ML
+torch>=2.1.0
+transformers>=4.45.0
+accelerate>=0.25.0
+peft>=0.7.0
+bitsandbytes>=0.41.0
+
+# Training
+trl>=0.15.0  # Required for stop_strings support in GRPOConfig
+
+# Data
+reasoning-gym
+datasets>=2.14.0
+pandas>=2.0.0
+pyarrow>=14.0.0
+
+# Utils
+pyyaml>=6.0
+tqdm
+math-verify

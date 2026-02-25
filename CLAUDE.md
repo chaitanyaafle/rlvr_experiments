@@ -32,12 +32,6 @@ python train_grpo_latent.py configs/train_latent_gsm8k.yaml
 
 ### Evaluation
 ```bash
-# Unified multi-environment evaluator (preferred)
-python evaluate_unified.py configs/eval_unified.yaml
-python evaluate_unified.py configs/eval_unified.yaml --checkpoint path/to/ckpt
-python evaluate_unified.py configs/eval_unified.yaml --output my_results/
-
-# Legacy single-environment evaluators
 python evaluate_sft.py configs/eval.yaml [optional_model_path] [num_samples]
 python evaluate.py configs/eval.yaml
 ```
@@ -56,12 +50,10 @@ All task environments implement `BaseEnvironment` with three abstract methods:
 - `get_reward_functions()` — returns a list of callables `(completions, **kwargs) -> List[float]`
 - `get_system_prompt()` — returns the system prompt string
 
-**Unified environment:** `reasoning_gym_env.py` (`ReasoningGymEnvironment`) wraps any of the 20 tasks registered in `reasoning_gym` (maze, countdown, knights_knaves, syllogism, …). The task is selected via `environment.name` in the config; all extra keys are forwarded to `reasoning_gym.create_dataset()`. Use `environments/__init__.py:load_environment()` to instantiate the right class.
-
-Legacy environments: `maze_env.py`, `battleship_env.py`, `gsm8k.py`, `syllogism_env.py`.
+Environments: `maze_env.py`, `battleship_env.py`, `gsm8k.py`, `syllogism_env.py`.
 
 External dependencies per environment:
-- `reasoning_gym` tasks: `reasoning_gym` library
+- Maze / Syllogism: `reasoning_gym` library
 - GSM8K: HF `openai/gsm8k` dataset + `math_verify` for answer checking
 - Battleship: self-contained (`battleship_logic.py`)
 
@@ -72,19 +64,21 @@ External dependencies per environment:
 
 All training scripts load hyperparameters from YAML configs.
 
+### Latent Thought Model (`latent_qwen.py`)
+`LatentQwen2ForCausalLM` extends `Qwen2ForCausalLM` to implement Coconut-style latent reasoning:
+- During `forward()`, it detects `<think>` tokens and expands them to `num_latent_thoughts` placeholder tokens
+- Runs the model chunk-by-chunk, replacing each latent token's embedding with the previous chunk's final hidden state
+- This allows iterative "thinking" in embedding space before the visible answer is generated
+- During `generate()`, a `LatentControlLogitsProcessor` forces `</think>` immediately after the latent expansion phase
+- Key attributes: `num_latent_thoughts`, `think_token_id`, `close_think_token_id`
+
 ### Configuration
 All experiments are driven by YAML configs in `configs/`. Key fields shared across configs:
-- `model.name_or_path` — base model or checkpoint to load
-- `training.output_dir` — where checkpoints are saved
-- `environment.name` — which task/env to use (e.g. `maze`, `countdown`, `gsm8k`)
+- `model_name_or_path` — base model to load
+- `output_dir` — where checkpoints are saved
+- `environment` — which env class to use
 - Training hyperparameters (lr, batch size, epochs, etc.)
 - Generation parameters (max_new_tokens, temperature, etc.)
-
-**Evaluation config** (`configs/eval_unified.yaml`) adds:
-- `environments` — list of env entries to evaluate sequentially (each is an `environment` block)
-- `evaluation.num_samples` — samples per environment
-- `evaluation.save_samples` — whether to dump full completions to `samples.json`
-- `--checkpoint` / `--output` CLI flags override config values at runtime
 
 ### Reward Functions (GRPO)
 Each environment's `get_reward_functions()` returns a list of reward functions composed additively. Typical pattern: one function rewards correct format (`<think>` + `<answer>` tags present), another rewards correctness of the extracted answer content.

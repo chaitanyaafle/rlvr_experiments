@@ -1,0 +1,58 @@
+# ============================================================================
+# GRPO Training: Countdown task on Qwen3-4B-Base (SFT-warmed)
+# ============================================================================
+# Usage: python train_grpo.py configs/config_qwen3_countdown.yaml
+#
+# Prerequisites:
+#   1. python data_gen/generate_sft_warmup.py
+#   2. python train_sft.py configs/config_qwen3_sft_warmup.yaml
+#   3. python test_grpo.py configs/config_qwen3_countdown.yaml  (smoke test)
+#
+# Designed for a single A100 (80GB). 500 steps ~17-25 hours.
+# Monitor: tensorboard --logdir results/grpo_qwen3_countdown
+# ============================================================================
+
+model:
+  name_or_path: results/qwen3_sft_warmup
+  torch_dtype: bfloat16
+  device_map: auto
+
+# --- Reasoning Gym Environment ---
+environment:
+  name: reasoning_gym
+  task_name: countdown
+  samples: 5000
+  task_params:
+    min_numbers: 4
+    max_numbers: 5
+    min_target: 50
+    max_target: 200
+
+seed: 42
+
+# --- Training ---
+training:
+  output_dir: results/grpo_qwen3_countdown
+  learning_rate: 5.0e-6
+  per_device_train_batch_size: 1   # 1 prompt per micro-batch (default 8 is way too much)
+  gradient_accumulation_steps: 4   # Effective batch = 4 prompts per step
+  num_train_epochs: 2
+  bf16: true
+  logging_steps: 1          # Log every step for detailed reward curves
+  save_strategy: steps
+  save_steps: 25             # Checkpoint every 25 steps (~50 min) for resume safety
+  save_total_limit: 3         # Auto-delete old checkpoints, keep only last 3
+  max_steps: 500
+  report_to: ["tensorboard"]  # TensorBoard logging
+  warmup_ratio: 0.05         # 25 warmup steps for stable early training
+
+# --- Generation (GRPO rollouts) ---
+generation:
+  max_completion_length: 1024
+  num_generations: 4       # Reduced from 8 to fit 4B model on A100
+  max_prompt_length: 512
+  temperature: 0.7
+
+# --- System Prompt ---
+system_prompt: |
+  You are a helpful assistant. Think step by step inside <think>...</think> tags, then provide your final answer inside <answer>...</answer> tags.

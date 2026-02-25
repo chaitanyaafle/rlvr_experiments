@@ -1,0 +1,31 @@
+# ============================================================================
+# SFT Warmup: Teach Qwen3-4B-Base the <think>/<answer> output format
+# ============================================================================
+# Usage:
+#   1. Generate data:  python data_gen/generate_sft_warmup.py
+#   2. Train:          python train_sft.py configs/config_qwen3_sft_warmup.yaml
+#
+# This is a short warmup (~15 min on A100) to teach the base model
+# instruction-following + think/answer tag structure before GRPO.
+# ============================================================================
+
+model:
+  name_or_path: Qwen/Qwen3-4B-Base
+  torch_dtype: bfloat16
+
+sft:
+  output_file: data_gen/data/sft_warmup.jsonl
+  output_dir: results/qwen3_sft_warmup
+
+training:
+  output_dir: results/qwen3_sft_warmup
+  learning_rate: 5.0e-5
+  num_train_epochs: 5
+  batch_size: 4
+  gradient_accumulation_steps: 4
+  bf16: true
+  logging_steps: 10
+  save_strategy: epoch
+  save_total_limit: 2         # Keep only last 2 epoch checkpoints
+  save_steps: 100
+  report_to: []

@@ -1,0 +1,52 @@
+# ============================================================================
+# GRPO Training: Countdown task on DeepSeek-R1-Distill-Qwen-1.5B
+# ============================================================================
+# Usage: python train_grpo.py configs/config_countdown_grpo.yaml
+#
+# This trains GRPO on the countdown task from reasoning-gym.
+# Designed for a single A100 (80GB). Should take ~2-3 hours.
+# ============================================================================
+
+model:
+  name_or_path: deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
+  torch_dtype: bfloat16
+  device_map: auto
+
+# --- Reasoning Gym Environment ---
+environment:
+  name: reasoning_gym
+  task_name: countdown
+  samples: 5000
+  task_params:
+    min_numbers: 4
+    max_numbers: 5
+    min_target: 50
+    max_target: 200
+
+seed: 42
+
+# --- Training ---
+training:
+  output_dir: results/grpo_countdown
+  learning_rate: 5.0e-6           # Lower than GSM8K — R1-Distill is already strong
+  gradient_accumulation_steps: 4
+  num_train_epochs: 2
+  bf16: true
+  logging_steps: 10
+  save_strategy: steps
+  save_steps: 200
+  max_steps: -1                   # -1 means use num_train_epochs instead
+  report_to:
+    - wandb
+
+# --- Generation (GRPO rollouts) ---
+generation:
+  max_completion_length: 1024     # R1 models are verbose — don't truncate!
+  num_generations: 8              # GRPO group size
+  max_prompt_length: 512
+  temperature: 0.7                # Sampling temp for rollouts
+
+# --- System Prompt ---
+# Keep it simple — DeepSeek-R1-Distill already knows how to reason in <think> blocks.
+system_prompt: |
+  You are a helpful assistant. Think step by step inside <think>...</think> tags, then provide your final answer inside <answer>...</answer> tags.
