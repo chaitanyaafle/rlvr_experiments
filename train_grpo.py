@@ -97,6 +97,8 @@ def main():
     training_args = GRPOConfig(
         output_dir=training_conf['output_dir'],
         learning_rate=float(training_conf['learning_rate']),
+        loss_type=training_conf.get('loss_type', 'grpo'),
+        beta=training_conf.get('beta', 0.04),
         remove_unused_columns=False,
         per_device_train_batch_size=training_conf.get('per_device_train_batch_size', 1),
         gradient_accumulation_steps=training_conf.get('gradient_accumulation_steps', 1),

@@ -1,0 +1,49 @@
+# ============================================================================
+# HP Sweep: DR-GRPO (A2)
+# ============================================================================
+# Loss: DR-GRPO (length-normalized rewards to reduce verbosity bias)
+# All other params = canonical baseline
+# Est. time: ~25 min on H100
+# ============================================================================
+
+model:
+  name_or_path: Qwen/Qwen3-4B-Instruct-2507
+  torch_dtype: bfloat16
+  device_map: auto
+
+environment:
+  name: reasoning_gym
+  task_name: countdown
+  samples: 5000
+  task_params:
+    min_numbers: 4
+    max_numbers: 5
+    min_target: 50
+    max_target: 200
+
+seed: 42
+
+training:
+  output_dir: results/hp_sweep/A2_dr_grpo
+  loss_type: dr_grpo
+  learning_rate: 5.0e-6
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 4
+  num_train_epochs: 2
+  bf16: true
+  logging_steps: 1
+  save_strategy: steps
+  save_steps: 50
+  save_total_limit: 2
+  max_steps: 350
+  report_to: ["tensorboard"]
+  warmup_ratio: 0.05
+
+generation:
+  max_completion_length: 1024
+  num_generations: 8
+  max_prompt_length: 512
+  temperature: 0.7
+
+system_prompt: |
+  You are a helpful assistant. Think step by step inside <think>...</think> tags, then provide your final answer inside <answer>...</answer> tags.
