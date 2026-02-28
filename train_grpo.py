@@ -30,7 +30,12 @@ def get_environment(config):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="GRPO Training")
+    parser = argparse.ArgumentParser(
+        description="GRPO Training\n\n"
+        "Single GPU:  python train_grpo.py configs/config.yaml\n"
+        "Multi-GPU:   torchrun --nproc_per_node=8 train_grpo.py configs/config.yaml\n"
+        "             accelerate launch --num_processes=8 train_grpo.py configs/config.yaml"
+    )
     parser.add_argument("config", nargs="?", default="config.yaml", help="Path to YAML config")
     parser.add_argument("--max_steps", type=int, default=None, help="Override max_steps (for smoke testing)")
     return parser.parse_args()
@@ -67,12 +72,14 @@ def main():
     reward_funcs = env.get_reward_functions()
     
     # Load Model
+    # NOTE: device_map must NOT be set for DDP — Accelerate places each replica
+    # on its assigned GPU. Using device_map='auto' would enable pipeline/tensor
+    # parallelism and break DDP.  Ignoring any device_map from the config here.
     model_path = config['model']['name_or_path']
     print(f"Loading model: {model_path}")
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
         torch_dtype=config['model'].get('torch_dtype', 'auto'),
-        device_map=config['model'].get('device_map', 'auto')
     )
     
     # Load tokenizer (needed for stop_strings and reward decoding)
@@ -116,6 +123,9 @@ def main():
         save_total_limit=training_conf.get('save_total_limit', None),
         max_steps=max_steps,
         warmup_steps=training_conf.get('warmup_steps', 0),
+        # DDP: disable unused-parameter detection to avoid hangs when some
+        # parameters don't receive a gradient on every step (e.g. embeddings).
+        ddp_find_unused_parameters=False,
     )
 
     # Trainer
